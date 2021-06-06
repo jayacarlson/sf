@@ -16,10 +16,6 @@ import (
 )
 
 type tokenMap map[string]string
-type fileInfo struct {
-	name string
-	size int64
-}
 
 var (
 	bug         = dbg.Dbg{}
@@ -34,10 +30,9 @@ var (
 	help        bool
 	metahelp    bool
 	tMap        tokenMap
-	incList     []string
-	excList     []string
+	incList     string
+	excList     string
 	outputFile  string
-	originDir   string
 	homeDir     string
 	leadOutput  string
 	tailOutput  string
@@ -91,6 +86,8 @@ const (
   d   Latest directory name
   D   Current dirpath, below [dir list] directory
   s   The file/dir size
+  c   File count inside the dir (dir output line)
+  C   Dir count inside the dir (dir output line)
   T   Current total file count (over all [dir list] dirs)
  --- files only output
   f   Current filepath from [dir list] directory on down
@@ -137,33 +134,46 @@ func init() {
 	tMap["O"] = homifyDir(pth.AsRealPath("."))
 }
 
-func (t tokenMap) tok(src string) string {
+func (t tokenMap) replace(src string) string {
 	if x := tokRex.FindStringSubmatch(src); x != nil {
-		lc, uc := false, false
-		if x[2] == "u" {
-			uc = true
-		} else if x[2] == "l" {
-			lc = true
+		vl, ok := "", false
+		if (x[2] == "0" || x[2] == " ") && (x[3][0] > '1' && x[3][0] < '9') { // 2..8 digits
+			key := x[3][1:2]
+			vl, ok = t[key]
+			dbg.ChkTruX(ok, "Unknown replacement token: %%%s", key)
+			dbg.ChkTruX(key=="c" || key=="C" || key=="T", "Illegal replacement token: %%%s", key)
+			flen := int(x[3][0] - '0') - len(vl)
+			x[3] = x[3][2:]
+			if flen > 0 {
+				vl = strings.Repeat(x[2],flen) + vl
+			}
+		} else {
+			lc, uc := false, false
+			if x[2] == "u" {
+				uc = true
+			} else if x[2] == "l" {
+				lc = true
+			}
+			if uc || lc {
+				x[2] = x[3][0:1]
+				x[3] = x[3][1:]
+				dbg.ChkTruX(-1 != strings.Index("rpdDfnNeE", x[2]), "Cannot change case for: %s", x[2])
+			}
+			vl, ok = t[x[2]]
+			dbg.ChkTruX(ok, "Unknown replacement token: %%%s", x[2])
+			if uc {
+				vl = strings.ToUpper(vl)
+			} else if lc {
+				vl = strings.ToLower(vl)
+			}
 		}
-		if uc || lc {
-			x[2] = x[3][0:1]
-			x[3] = x[3][1:]
-			dbg.ChkTruX(-1 != strings.Index("rpdDfnNeE", x[2]), "Cannot change case for: %s", x[2])
-		}
-		vl, ok := tMap[x[2]]
-		dbg.ChkTruX(ok, "Unknown replacement token: %%%s", x[2])
-		if uc {
-			vl = strings.ToUpper(vl)
-		} else if lc {
-			vl = strings.ToLower(vl)
-		}
-		return x[1] + vl + t.tok(x[3])
+		return x[1] + vl + t.replace(x[3])
 	}
 	return src
 }
 
 func (t tokenMap) output(outTo io.Writer, src string) {
-	outLine := strings.Replace(t.tok(src), "\\n", "\n", -1)
+	outLine := strings.Replace(t.replace(src), "\\n", "\n", -1)
 	fmt.Fprintln(outTo, outLine)
 }
 
@@ -173,15 +183,6 @@ func (t tokenMap) String() string {
 		out += fmt.Sprintf("  %s: %s\n", t, v)
 	}
 	return out + "]"
-}
-
-func stringInSlice(s string, l []string) bool {
-	for _, t := range l {
-		if s == t {
-			return true
-		}
-	}
-	return false
 }
 
 func homifyDir(theDir string) string {
@@ -208,7 +209,9 @@ func clearFileMetas() {
 }
 
 func clearDirMetas() {
-	delete(tMap, "d") // remove any previous 'dir' metachars
+	delete(tMap, "c") // remove any previous 'dir' metachars
+	delete(tMap, "C")
+	delete(tMap, "d")
 	delete(tMap, "D")
 	delete(tMap, "p")
 	delete(tMap, "P")
@@ -242,20 +245,6 @@ func handleFiles(outTo io.Writer, dirPath string, fileNames []string) error {
 		if ignoreECase {
 			ext = strings.ToLower(ext)
 		}
-		if ext == "" {
-			ext = "-"
-		}
-
-		if len(incList) != 0 {
-			if !stringInSlice(ext, incList) {
-				continue
-			}
-		}
-		if len(excList) != 0 {
-			if stringInSlice(ext, excList) {
-				continue
-			}
-		}
 
 		count += 1
 		fileCount += 1
@@ -277,9 +266,9 @@ func handleDir(outTo io.Writer, dirRoot, dirPath, curDir string) error {
 	realPath := pth.AsRealPath(dirRoot, dirPath, curDir)
 	curPath := path.Join(dirPath, curDir)
 
-	bug.Warning("dirPath: %s  curDir: %s", dirPath, curDir)
-	bug.Info("realPath: %s", realPath)
-	bug.Info("curPath:  %s", curPath)
+	bug.Warning("handleDir: dirRoot: %s  dirPath: %s  curDir: %s", dirRoot, dirPath, curDir)
+	//bug.Info("realPath: %s", realPath)
+	//bug.Info("curPath:  %s", curPath)
 
 	// validate latest realPath, (test dirs in recursion situation)
 	//  should only possibly get Err_Permission
@@ -312,6 +301,24 @@ func handleDir(outTo io.Writer, dirRoot, dirPath, curDir string) error {
 			if !hiddenFiles && entry.Name()[0] == '.' {
 				continue
 			}
+			if incList != "" || excList != "" {
+				_, _, ext := pth.Split(entry.Name())
+				if ext != "" {
+					ext = ext[1:]
+				} else {
+					ext = "-"
+				}
+				if ignoreECase {
+					ext = strings.ToLower(ext)
+				}
+
+				if incList != "" && -1 == strings.Index(incList, " "+ext+" ") {
+					continue
+				}
+				if excList != "" && -1 != strings.Index(excList, " "+ext+" ") {
+					continue
+				}
+			}
 			theFiles = append(theFiles, entry.Name())
 		}
 	}
@@ -328,6 +335,9 @@ func handleDir(outTo io.Writer, dirRoot, dirPath, curDir string) error {
 	tMap["D"] = curPath
 	tMap["d"] = curDir
 	tMap["s"] = strconv.FormatInt(fi.Size(), 10)
+	tMap["c"] = strconv.FormatInt(int64(len(theFiles)), 10)
+	tMap["C"] = strconv.FormatInt(int64(len(theDirs)), 10)
+	tMap["T"] = strconv.FormatInt(totalCount, 10)
 
 	// output dir lead (argDir / recursive)
 	if dirOutput != "" {
@@ -399,7 +409,7 @@ func processDir(outTo io.Writer, curDir string) error {
 
 func main() {
 	var outTo *os.File = os.Stdout // default output to stdout
-	//	bug.Enabled = true
+//	bug.Enabled = true
 
 	flag.Parse()
 	if help {
@@ -417,13 +427,13 @@ func main() {
 		if ignoreECase {
 			include = strings.ToLower(include)
 		}
-		incList = strings.Split(include, " ")
+		incList = " " + include + " "
 	}
 	if exclude != "" {
 		if ignoreECase {
 			exclude = strings.ToLower(exclude)
 		}
-		excList = strings.Split(exclude, " ")
+		excList = " " + exclude + " "
 	}
 	if dirOutput == "" && fileOutput == "" {
 		fileOutput = "%f"
@@ -454,7 +464,7 @@ func main() {
 			}
 		}
 		tMap["a"] = args
-		fmt.Fprintln(outTo, tMap.tok(bashHead))
+		fmt.Fprintln(outTo, tMap.replace(bashHead))
 		delete(tMap, "a")
 	}
 
