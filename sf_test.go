@@ -67,8 +67,8 @@ func initFunc() {
 	hiddenDirs = false
 	recursive = false
 	reverse = false
-	incList = []string{}
-	excList = []string{}
+	incList = ""
+	excList = ""
 	totalCount = 0
 }
 
@@ -82,56 +82,56 @@ func setIELists(ignore bool, include, exclude string) {
 		if ignoreECase {
 			include = strings.ToLower(include)
 		}
-		incList = strings.Split(include, " ")
+		incList = " " + include + " "
 	}
 	if exclude != "" {
 		if ignoreECase {
 			exclude = strings.ToLower(exclude)
 		}
-		excList = strings.Split(exclude, " ")
+		excList = " " + exclude + " "
 	}
 }
 
 // ========================================================================= //
 //	Can't use %P, %R or %F as they are unique to each user's dir structure
 
-func testDirsNonRecursive() (string, bool) {
+func testDirsNonRecursive() (string, string, bool) {
 	fileOutput = ""
 	dirOutput = "r: %r   p: %p   D: %D   d: %d"
 	processDir(outTo, "testdata")
 	sum := outTo.MD5Sum()
-	return dbg.IAm(), sum != "dd32871c2c927dad0a655ac8f4155b1a"
+	return dbg.IAm(), "", sum != "dd32871c2c927dad0a655ac8f4155b1a"
 }
 
-func testDirsRecursive() (string, bool) {
+func testDirsRecursive() (string, string, bool) {
 	recursive = true
 	fileOutput = ""
 	dirOutput = "r: %r   p: %p   D: %D   d: %d"
 	processDir(outTo, "testdata")
 	sum := outTo.MD5Sum()
-	return dbg.IAm(), sum != "546f6d03637df3138ceb857cf0ee44b1"
+	return dbg.IAm(), "", sum != "546f6d03637df3138ceb857cf0ee44b1"
 }
 
-func testDirsReverseRecursive() (string, bool) {
+func testDirsReverseRecursive() (string, string, bool) {
 	reverse = true
 	recursive = true
 	fileOutput = ""
 	dirOutput = "r: %r   p: %p   D: %D   d: %d"
 	processDir(outTo, "testdata")
 	sum := outTo.MD5Sum()
-	return dbg.IAm(), sum != "de20c3392d493f80247b422e5bdbe34a"
+	return dbg.IAm(), "", sum != "de20c3392d493f80247b422e5bdbe34a"
 }
 
-func testDirsAlterCase() (string, bool) {
+func testDirsAlterCase() (string, string, bool) {
 	recursive = true
 	fileOutput = ""
 	dirOutput = " r: %r   p: %p   D: %D   d: %d\nlr: %lr  lp: %lp  lD: %lD  ld: %ld\nur: %ur  up: %up  uD: %uD  ud: %ud"
 	processDir(outTo, "testdata")
 	sum := outTo.MD5Sum()
-	return dbg.IAm(), sum != "648c63c6bd4cc350519d734e6978c618"
+	return dbg.IAm(), "", sum != "648c63c6bd4cc350519d734e6978c618"
 }
 
-func testDirsBashOutput() (string, bool) {
+func testDirsBashOutput() (string, string, bool) {
 	recursive = true
 	fileOutput = ""
 	// bashHeader processed by 'main', but we can get argDir lead/tail
@@ -140,87 +140,87 @@ func testDirsBashOutput() (string, bool) {
 	dirOutput = "someTool %p someOtherDir/%D"
 	processDir(outTo, "testdata")
 	sum := outTo.MD5Sum()
-	return dbg.IAm(), sum != "6ae1c460dea9c5de52d7ec8b3924a0bd"
+	return dbg.IAm(), "", sum != "6ae1c460dea9c5de52d7ec8b3924a0bd"
 }
 
-func testFilesNonRecursive() (string, bool) {
+func testFilesNonRecursive() (string, string, bool) {
 	fileOutput = "f: %f  n: %n  N: %N  e: %e  E: %E  c: %c  C: %C"
 	processDir(outTo, "testdata")
 	sum := outTo.MD5Sum()
-	return dbg.IAm(), sum != "7d639395050a94b5aa53229b0b16289b"
+	return dbg.IAm(), "", sum != "7d639395050a94b5aa53229b0b16289b"
 }
 
-func testFilesRecursive() (string, bool) {
+func testFilesRecursive() (string, string, bool) {
 	recursive = true
 	fileOutput = "f: %f  n: %n  N: %N  e: %e  E: %E  c: %c  C: %C"
 	processDir(outTo, "testdata")
 	sum := outTo.MD5Sum()
-	return dbg.IAm(), sum != "58ec0905a533b1f2fb525c2147d92313"
+	return dbg.IAm(), "", sum != "58ec0905a533b1f2fb525c2147d92313"
 }
 
-func testFilesReverseRecursive() (string, bool) {
+func testFilesReverseRecursive() (string, string, bool) {
 	reverse = true
 	recursive = true
 	fileOutput = "f: %f  n: %n  N: %N  e: %e  E: %E  c: %c  C: %C"
 	processDir(outTo, "testdata")
 	sum := outTo.MD5Sum()
-	return dbg.IAm(), sum != "076668796119c36c488f1d2d44f2fceb"
+	return dbg.IAm(), "", sum != "076668796119c36c488f1d2d44f2fceb"
 }
 
-func testFilesNoExt() (string, bool) {
+func testFilesNoExt() (string, string, bool) {
 	recursive = true
 	setIELists(false, "-", "")
 	fileOutput = "f: %f  n: %n  N: %N  e: %e  E: %E  c: %c  C: %C"
 	processDir(outTo, "testdata")
 	sum := outTo.MD5Sum()
-	return dbg.IAm(), sum != "b86e1dd278bfde0201c0f6ed256a2ff6"
+	return dbg.IAm(), "", sum != "b86e1dd278bfde0201c0f6ed256a2ff6"
 }
 
-func testFilesIncExt() (string, bool) {
+func testFilesIncExt() (string, string, bool) {
 	recursive = true
 	setIELists(false, "ext ex1 ex2", "")
 	fileOutput = "f: %f  n: %n  N: %N  e: %e  E: %E  c: %c  C: %C"
 	processDir(outTo, "testdata")
 	sum := outTo.MD5Sum()
-	return dbg.IAm(), sum != "2f5f9c5c394fa05a4263c70e55337ad6"
+	return dbg.IAm(), "", sum != "2f5f9c5c394fa05a4263c70e55337ad6"
 }
 
-func testFilesExcExt() (string, bool) {
+func testFilesExcExt() (string, string, bool) {
 	recursive = true
 	setIELists(false, "", "ext ex1 ex2")
 	fileOutput = "f: %f  n: %n  N: %N  e: %e  E: %E  c: %c  C: %C"
 	processDir(outTo, "testdata")
 	sum := outTo.MD5Sum()
-	return dbg.IAm(), sum != "afe7e561ba3a61beb191f940a5eb5848"
+	return dbg.IAm(), "", sum != "afe7e561ba3a61beb191f940a5eb5848"
 }
 
-func testFilesIncExtIgCase() (string, bool) {
+func testFilesIncExtIgCase() (string, string, bool) {
 	recursive = true
 	setIELists(true, "ext -", "")
 	fileOutput = "f: %f  n: %n  N: %N  e: %e  E: %E  c: %c  C: %C"
 	processDir(outTo, "testdata")
 	sum := outTo.MD5Sum()
-	return dbg.IAm(), sum != "b681cc0fa83baf30f7565d80e459df3f"
+	return dbg.IAm(), "", sum != "b681cc0fa83baf30f7565d80e459df3f"
 }
 
-func testFilesExcExtIgCase() (string, bool) {
+func testFilesExcExtIgCase() (string, string, bool) {
 	recursive = true
 	setIELists(true, "", "ext -")
 	fileOutput = "f: %f  n: %n  N: %N  e: %e  E: %E  c: %c  C: %C"
 	processDir(outTo, "testdata")
 	sum := outTo.MD5Sum()
-	return dbg.IAm(), sum != "4b89da8ee6ac1cded5119fb4231411c6"
+	return dbg.IAm(), "", sum != "4b89da8ee6ac1cded5119fb4231411c6"
 }
 
-func testFilesAlterCase() (string, bool) {
+func testFilesAlterCase() (string, string, bool) {
 	recursive = true
 	fileOutput = " f: %f   n: %n   N: %N   e: %e   E: %E  c: %c  C: %C\nuf: %uf  un: %un  uN: %uN  ue: %ue  uE: %uE\nlf: %lf  ln: %ln  lN: %lN  le: %le  lE: %lE"
 	processDir(outTo, "testdata")
 	sum := outTo.MD5Sum()
-	return dbg.IAm(), sum != "6da7b87df46dd0b4afe8dce9c93315d2"
+	return dbg.IAm(), "", sum != "6da7b87df46dd0b4afe8dce9c93315d2"
 }
 
-func testFilesBashOutput() (string, bool) {
+func testFilesBashOutput() (string, string, bool) {
 	recursive = true
 	// bashHeader processed by 'main', but we can get argDir lead/tail
 	aLeadOutput = "# Going to run 'someTool' on files in '%r'"
@@ -228,7 +228,7 @@ func testFilesBashOutput() (string, bool) {
 	fileOutput = "someTool %f someOtherDir/%D/x-%n-x"
 	processDir(outTo, "testdata")
 	sum := outTo.MD5Sum()
-	return dbg.IAm(), sum != "539d5a154f00b639f5234c882d9e5940"
+	return dbg.IAm(), "", sum != "539d5a154f00b639f5234c882d9e5940"
 }
 
 func TestDirs(t *testing.T) {

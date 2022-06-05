@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -18,32 +19,23 @@ import (
 type tokenMap map[string]string
 
 var (
-	bug         = dbg.Dbg{}
-	tokRex      = regexp.MustCompile("((?s).*?)%(.)((?s).*)")
-	recursive   bool
-	bashHeader  bool
-	hiddenFiles bool
-	hiddenDirs  bool
-	ignoreECase bool
-	reverse     bool
-	dontHomify  bool
-	help        bool
-	metahelp    bool
-	tMap        tokenMap
-	incList     string
-	excList     string
-	outputFile  string
-	homeDir     string
-	leadOutput  string
-	tailOutput  string
-	aLeadOutput string
-	aTailOutput string
-	dirOutput   string
-	fileOutput  string
-	include     string
-	exclude     string
-	fileCount   int64
-	totalCount  int64 = 0
+	bug                                  = dbg.Dbg{}
+	tokRex                               = regexp.MustCompile("((?s).*?)%(.)((?s).*)")
+	tMap                                 tokenMap
+	bashHeader, reverse, dontHomify      bool
+	recursive, hiddenFiles, hiddenDirs   bool
+	ignoreECase, help, cfgHelp, metaHelp bool
+	configFile, outputFile               string
+	homifiedProcessDir, homifiedRealPath string
+	homeDir, currentFullPath             string
+	include, exclude, incList, excList   string
+	leadOutput, tailOutput               string
+	aLeadOutput, aTailOutput             string
+	dirOutput, fileOutput                string
+	cParams, cHead, cTail                string
+	cArgs                                [9]string
+	fileCount                            int64
+	totalCount                           int64 = 0
 )
 
 const (
@@ -55,6 +47,8 @@ const (
 	helpString = `Usage of sf:  [args] [dir list]
   -?          Show help with output string meta-characters
   -b          Output BASH header at start (output file made executable)
+  -c file     Config file
+  -?c         Show help on configuration file settings
   -D          Include hidden directories
   -F          Include hidden files
   -h          Do not ~/homify paths (simplify full paths to ~/ if possible)
@@ -66,36 +60,38 @@ const (
   -x string   File filter by list of extensions (exclusive)
   -d string   Per directory output (default: "" - limited metachars: OHrRdDpP)
   -f string   Output string per file (defaults to '%f' -- filepath)
-  -L string   Startup lead output string (limited metachars: OH)
-  -T string   Final tail output string (limited metachars: OHT)
-  -l string   [dir list] directory lead output string (limited metachars: OHrR)
-  -t string   [dir list] directory tail output string (limited metachars: OHrRCT)
+  -L string   Startup leading output string (limited metachars: OH)
+  -T string   Final trailing output string (limited metachars: OHT)
+  -l string   Per [dir list] directory lead output string (limited metachars: OHrR)
+  -t string   Per [dir list] directory tail output string (limited metachars: OHrRCT)
+
+  -1 ... -9 string   Special case when using config files
 
     If no [dir list] given, the PWD (./) is used.
 
-    To include/exclude files with no extension use '-'.
+    Only -i OR -x can be used.  To include/exclude files with no extension use '-'.
      e.g. -[ix] "go - txt"
 `
 	metaHelpString = `The supported %meta values are as follows:
   O   Origin path (PWD) from where sf was called, always homified
   H   Users real HOME path: /home/<user>
-  r   [dir list] directory as given from [dir list]
-  R   Full dirpath of given [dir list] directory (homified by default)
-  p   Current dirpath, from [dir list] directory on down
-  P   Current full dirpath, from [dir list] dir on down (homified by default)
+  R   Root to [dir list] path (homified by default)
+  r   Current [dir list] directory
+  P   Current full dirpath (homified by default)
+  p   Dirpath from [dir list] on down
+  D   Dirpath below [dir list] directory
   d   Latest directory name
-  D   Current dirpath, below [dir list] directory
   s   The file/dir size
   c   File count inside the dir (dir output line)
   C   Dir count inside the dir (dir output line)
   T   Current total file count (over all [dir list] dirs)
  --- files only output
-  f   Current filepath from [dir list] directory on down
+  f   Current [dir list] filepath
   F   Current full filepath (homified by default)
-  n   Current filename and extension as read: file.ext
-  N   Current filename without any extension: file
-  e   Current extension, without leading '.': ext
-  E   Current extension, including the '.':  .ext
+  n   Current filename and extension as read: 'file.ext'
+  N   Current filename without any extension: 'file'
+  e   Current extension, no leading '.':      'ext'
+  E   Current file extention, with '.':       '.ext'
   c   Current file count inside the dir
   C   Current file count inside [dir list] dir
 
@@ -103,50 +99,104 @@ const (
    with a 'u' to uppercasify the value, or 'l' lowercasify the value.
    e.g.:  'Dir/File.Ext' can be adjusted to
           'DIR' | 'dir' / 'FILE' | 'file' / 'EXT' | 'ext'
+           %ur     %lr     %un      %ln      %ue     %le
+  NOTE: the meta values p, D & f can be prepended with '@' to replace
+   the dir separator '/' with '@'.  (Cannot combine with 'u' & 'l')
+   e.g.: %@f of 'dir/sub-dir/file' becomes 'dir@sub-dir@file'
+`
+	cfgHelpString = `Read the given 'configuration' file looking for 'params' 'head' and 'tail'
+blocks.  The 'params' override any given command line arguments.  The 'head'
+block is output after any bash header request (-b) and before any -H line,
+followed by file/director processing, then any -T line and finally the
+'tail' block is output.
+
+In addition to the standard %meta characters (which can be over-ridden by
+the 'params' field) the arguments -1 through -9 can be given on the command
+line and can then be used as the meta characters %1 through %9 while SF is 
+processing the 'head' and 'tail' blocks.
+
+params <
+-r -h -i "jpg jpeg png gif tiff" -I
+>
+
+head <
+These are all the image files...
+>
+
+tail <
+... All done
+>
 `
 )
 
 func init() {
-	flag.BoolVar(&metahelp, "?", false, "Show help with output string meta-characters")
-	flag.BoolVar(&hiddenDirs, "D", false, "Include hidden directories")
-	flag.BoolVar(&hiddenFiles, "F", false, "Include hidden files")
-	flag.BoolVar(&dontHomify, "h", false, "Do not ~/homify paths (simplify full paths to ~/ if possible)")
-	flag.BoolVar(&ignoreECase, "I", false, "Ignore case when filtering by file extension")
-	flag.BoolVar(&help, "help", false, "Show arg help")
-	flag.BoolVar(&recursive, "r", false, "Recurse into directories")
-	flag.BoolVar(&bashHeader, "b", false, "Output BASH header at start")
-	flag.BoolVar(&reverse, "s", false, "Sort in decending order")
+	flag.BoolVar(&metaHelp, "?", false, "error")
+	flag.BoolVar(&cfgHelp, "?c", false, "error")
+	flag.BoolVar(&help, "help", false, "error")
+	flag.BoolVar(&hiddenDirs, "D", false, "bool")
+	flag.BoolVar(&hiddenFiles, "F", false, "bool")
+	flag.BoolVar(&dontHomify, "h", false, "bool")
+	flag.BoolVar(&ignoreECase, "I", false, "bool")
+	flag.BoolVar(&recursive, "r", false, "bool")
+	flag.BoolVar(&bashHeader, "b", false, "bool")
+	flag.BoolVar(&reverse, "s", false, "bool")
 
-	flag.StringVar(&outputFile, "o", "", "File to output data")
-	flag.StringVar(&include, "i", "", "Filter by list of extensions (inclusive)")
-	flag.StringVar(&exclude, "x", "", "Filter by list of extensions (exclusive)")
-	flag.StringVar(&fileOutput, "f", "", "Output string per file (defaults to '%f' -- filepath)")
-	flag.StringVar(&leadOutput, "L", "", "Startup lead output string")
-	flag.StringVar(&tailOutput, "T", "", "Final tail output string")
-	flag.StringVar(&aLeadOutput, "l", "", "[dir list] directory lead output string")
-	flag.StringVar(&aTailOutput, "t", "", "[dir list] directory tail output string")
-	flag.StringVar(&dirOutput, "d", "", "Per directory lead output string")
+	flag.StringVar(&outputFile, "o", "", "string")
+	flag.StringVar(&include, "i", "", "string")
+	flag.StringVar(&exclude, "x", "", "string")
+	flag.StringVar(&fileOutput, "f", "", "string")
+	flag.StringVar(&leadOutput, "L", "", "string")
+	flag.StringVar(&tailOutput, "T", "", "string")
+	flag.StringVar(&aLeadOutput, "l", "", "string")
+	flag.StringVar(&aTailOutput, "t", "", "string")
+	flag.StringVar(&dirOutput, "d", "", "string")
+
+	flag.StringVar(&configFile, "c", "", "error")
+	flag.StringVar(&cArgs[0], "1", "", "error")
+	flag.StringVar(&cArgs[1], "2", "", "error")
+	flag.StringVar(&cArgs[2], "3", "", "error")
+	flag.StringVar(&cArgs[3], "4", "", "error")
+	flag.StringVar(&cArgs[4], "5", "", "error")
+	flag.StringVar(&cArgs[5], "6", "", "error")
+	flag.StringVar(&cArgs[6], "7", "", "error")
+	flag.StringVar(&cArgs[7], "8", "", "error")
+	flag.StringVar(&cArgs[8], "9", "", "error")
 
 	homeDir = pth.AsRealPath("~")
 	tMap = make(tokenMap)
 	tMap["%"] = "%"
-	tMap["H"] = homeDir
-	tMap["O"] = homifyDir(pth.AsRealPath("."))
+	tMap.safeset("H", homeDir)
+	tMap.safeset("O", homifyDir(pth.AsRealPath(".")))
+}
+
+func (t tokenMap) safeset(tok, str string) {
+	str = strings.ReplaceAll(str, ` `, `\ `)
+	str = strings.ReplaceAll(str, `(`, `\(`) // are these others needed?
+	str = strings.ReplaceAll(str, `)`, `\)`)
+	str = strings.ReplaceAll(str, `'`, `\'`)
+	str = strings.ReplaceAll(str, `"`, `\"`)
+	t[tok] = str
 }
 
 func (t tokenMap) replace(src string) string {
 	if x := tokRex.FindStringSubmatch(src); x != nil {
 		vl, ok := "", false
-		if (x[2] == "0" || x[2] == " ") && (x[3][0] > '1' && x[3][0] < '9') { // 2..8 digits
+		if (x[2] == "0" || x[2] == " ") && (x[3][0] > '1' && x[3][0] <= '9') { // 2..9 digits
 			key := x[3][1:2]
 			vl, ok = t[key]
 			dbg.ChkTruX(ok, "Unknown replacement token: %%%s", key)
-			dbg.ChkTruX(key=="c" || key=="C" || key=="T", "Illegal replacement token: %%%s", key)
-			flen := int(x[3][0] - '0') - len(vl)
+			dbg.ChkTruX(key == "c" || key == "s" || key == "C" || key == "T",
+				"Illegal replacement token: %%%s", key)
+			flen := int(x[3][0]-'0') - len(vl)
 			x[3] = x[3][2:]
 			if flen > 0 {
-				vl = strings.Repeat(x[2],flen) + vl
+				vl = strings.Repeat(x[2], flen) + vl
 			}
+		} else if x[2] == "@" && (x[3][0] == 'p' || x[3][0] == 'D' || x[3][0] == 'f') {
+			x[2] = x[3][0:1]
+			x[3] = x[3][1:]
+			vl, _ = t[x[2]]
+			vl = strings.ReplaceAll(vl, "/", "@")
 		} else {
 			lc, uc := false, false
 			if x[2] == "u" {
@@ -157,7 +207,8 @@ func (t tokenMap) replace(src string) string {
 			if uc || lc {
 				x[2] = x[3][0:1]
 				x[3] = x[3][1:]
-				dbg.ChkTruX(-1 != strings.Index("rpdDfnNeE", x[2]), "Cannot change case for: %s", x[2])
+				dbg.ChkTruX(-1 != strings.Index("rpdDfnNeE", x[2]),
+					"Cannot change case for: %s", x[2])
 			}
 			vl, ok = t[x[2]]
 			dbg.ChkTruX(ok, "Unknown replacement token: %%%s", x[2])
@@ -173,7 +224,7 @@ func (t tokenMap) replace(src string) string {
 }
 
 func (t tokenMap) output(outTo io.Writer, src string) {
-	outLine := strings.Replace(t.replace(src), "\\n", "\n", -1)
+	outLine := strings.ReplaceAll(t.replace(src), "\\n", "\n")
 	fmt.Fprintln(outTo, outLine)
 }
 
@@ -194,6 +245,47 @@ func homifyDir(theDir string) string {
 		}
 	}
 	return theDir
+}
+
+func addNumberArgs() {
+	if "" != cArgs[0] {
+		tMap["1"] = cArgs[0]
+	}
+	if "" != cArgs[1] {
+		tMap["2"] = cArgs[1]
+	}
+	if "" != cArgs[2] {
+		tMap["3"] = cArgs[2]
+	}
+	if "" != cArgs[3] {
+		tMap["4"] = cArgs[3]
+	}
+	if "" != cArgs[4] {
+		tMap["5"] = cArgs[4]
+	}
+	if "" != cArgs[5] {
+		tMap["6"] = cArgs[5]
+	}
+	if "" != cArgs[6] {
+		tMap["7"] = cArgs[6]
+	}
+	if "" != cArgs[7] {
+		tMap["8"] = cArgs[7]
+	}
+	if "" != cArgs[8] {
+		tMap["9"] = cArgs[8]
+	}
+}
+func clearNumberArgs() {
+	delete(tMap, "0") // remove any number metachars
+	delete(tMap, "1")
+	delete(tMap, "2")
+	delete(tMap, "3")
+	delete(tMap, "4")
+	delete(tMap, "5")
+	delete(tMap, "6")
+	delete(tMap, "7")
+	delete(tMap, "8")
 }
 
 func clearFileMetas() {
@@ -219,7 +311,7 @@ func clearDirMetas() {
 }
 
 func handleFiles(outTo io.Writer, dirPath string, fileNames []string) error {
-	var ext string
+	var nm, ext string
 	var count int64 = 0
 	for _, fileName := range fileNames {
 		realPath := pth.AsRealPath(dirPath, fileName)
@@ -234,13 +326,15 @@ func handleFiles(outTo io.Writer, dirPath string, fileNames []string) error {
 			return err
 		}
 
-		tMap["n"] = fileName
-		_, tMap["N"], ext = pth.Split(realPath)
-		tMap["E"] = ext
+		tMap.safeset("n", fileName)
+		_, nm, ext = pth.Split(realPath)
+
+		tMap.safeset("N", nm)
+		tMap.safeset("E", ext)
 		if ext != "" {
 			ext = ext[1:]
 		}
-		tMap["e"] = ext
+		tMap.safeset("e", ext)
 
 		if ignoreECase {
 			ext = strings.ToLower(ext)
@@ -253,8 +347,12 @@ func handleFiles(outTo io.Writer, dirPath string, fileNames []string) error {
 		tMap["C"] = strconv.FormatInt(fileCount, 10)
 		tMap["T"] = strconv.FormatInt(totalCount, 10)
 		tMap["s"] = strconv.FormatInt(fi.Size(), 10)
-		tMap["F"] = path.Clean(tMap["P"] + "/" + fileName)
-		tMap["f"] = tMap["p"] + "/" + fileName
+		tMap.safeset("F", path.Clean(homifiedRealPath+"/"+fileName))
+		if tMap["p"] == "." {
+			tMap.safeset("f", fileName)
+		} else {
+			tMap.safeset("f", currentFullPath+"/"+fileName)
+		}
 		tMap.output(outTo, fileOutput)
 	}
 	return nil
@@ -301,7 +399,7 @@ func handleDir(outTo io.Writer, dirRoot, dirPath, curDir string) error {
 			if !hiddenFiles && entry.Name()[0] == '.' {
 				continue
 			}
-			if incList != "" || excList != "" {
+			if "" != incList || "" != excList {
 				_, _, ext := pth.Split(entry.Name())
 				if ext != "" {
 					ext = ext[1:]
@@ -312,10 +410,10 @@ func handleDir(outTo io.Writer, dirRoot, dirPath, curDir string) error {
 					ext = strings.ToLower(ext)
 				}
 
-				if incList != "" && -1 == strings.Index(incList, " "+ext+" ") {
+				if "" != incList && -1 == strings.Index(incList, " "+ext+" ") {
 					continue
 				}
-				if excList != "" && -1 != strings.Index(excList, " "+ext+" ") {
+				if "" != excList && -1 != strings.Index(excList, " "+ext+" ") {
 					continue
 				}
 			}
@@ -330,10 +428,12 @@ func handleDir(outTo io.Writer, dirRoot, dirPath, curDir string) error {
 	}
 
 	clearFileMetas()
-	tMap["P"] = homifyDir(realPath)
-	tMap["p"] = path.Join(tMap["r"], curPath)
-	tMap["D"] = curPath
-	tMap["d"] = curDir
+	homifiedRealPath = homifyDir(realPath)
+	currentFullPath = path.Join(homifiedProcessDir, curPath)
+	tMap.safeset("P", homifiedRealPath)
+	tMap.safeset("p", currentFullPath)
+	tMap.safeset("D", curPath)
+	tMap.safeset("d", curDir)
 	tMap["s"] = strconv.FormatInt(fi.Size(), 10)
 	tMap["c"] = strconv.FormatInt(int64(len(theFiles)), 10)
 	tMap["C"] = strconv.FormatInt(int64(len(theDirs)), 10)
@@ -372,9 +472,10 @@ func handleDir(outTo io.Writer, dirRoot, dirPath, curDir string) error {
 				if nil != err {
 					return err
 				}
+				homifiedRealPath = homifyDir(realPath)
 				tMap["s"] = strconv.FormatInt(fi.Size(), 10)
-				tMap["P"] = homifyDir(realPath)
-				tMap["d"] = dirName
+				tMap.safeset("P", homifiedRealPath)
+				tMap.safeset("d", dirName)
 				tMap.output(outTo, dirOutput)
 			}
 		}
@@ -389,8 +490,9 @@ func processDir(outTo io.Writer, curDir string) error {
 	if dirRoot[0] != '/' {
 		dirRoot = pth.AsRealPath("./" + curDir)
 	}
-	tMap["R"] = homifyDir(dirRoot)
-	tMap["r"] = homifyDir(curDir)
+	homifiedProcessDir = homifyDir(curDir)
+	tMap.safeset("R", homifyDir(dirRoot))
+	tMap.safeset("r", homifiedProcessDir)
 	fileCount = 0
 	if aLeadOutput != "" {
 		clearFileMetas()
@@ -407,39 +509,103 @@ func processDir(outTo io.Writer, curDir string) error {
 	return err
 }
 
+var (
+	Err_NotExist   = errors.New("File/dir doesn't exist")
+	Err_Permission = errors.New("Permission Denied")
+)
+
+func chkErr(err error) error {
+	if nil != err {
+		switch t := err.(type) {
+		case *os.PathError:
+			if os.IsNotExist(err) {
+				return Err_NotExist
+			}
+			if os.IsPermission(err) {
+				return Err_Permission
+			}
+			dbg.Message("OS path err: %v", err)
+		default:
+			dbg.Message("Path err type: %v", t)
+		}
+	}
+	return err
+}
+
+func chkDirErr(realPath string, err error) error {
+	err = chkErr(err)
+	switch err {
+	case nil:
+		return nil
+	case Err_NotExist:
+		dbg.Warning("Failed to stat dir: `%s`", realPath)
+		return err
+	case Err_Permission:
+		dbg.Warning("Failed to open restricted dir: `%s`", realPath)
+		return err
+	default:
+		dbg.Error("Error %v for dir `%s`", err, realPath)
+		return err
+	}
+}
+
+func chkFileErr(realPath string, err error) error {
+	err = chkErr(err)
+	switch err {
+	case nil:
+		return nil
+	case Err_NotExist:
+		dbg.Warning("Failed to stat file: `%s`", realPath)
+		return nil
+	case Err_Permission:
+		dbg.Warning("Failed to stat restricted file: `%s`", realPath)
+		return nil
+	default:
+		dbg.Error("Error %v for file `%s`", err, realPath)
+		return err
+	}
+}
+
 func main() {
 	var outTo *os.File = os.Stdout // default output to stdout
-//	bug.Enabled = true
+	//	bug.Enabled = true
 
 	flag.Parse()
 	if help {
 		fmt.Printf("%s", helpString)
 		return
 	}
-	if metahelp {
+	if metaHelp {
 		fmt.Printf("%s", metaHelpString)
 		return
 	}
-	if include != "" && exclude != "" {
+	if cfgHelp {
+		fmt.Printf("%s", cfgHelpString)
+		return
+	}
+	if "" != configFile {
+		readConfigFile(configFile)
+	}
+	if "" != include && "" != exclude {
 		dbg.Fatal("Can only use -i or -x, not both")
 	}
-	if include != "" {
+	if "" != include {
 		if ignoreECase {
 			include = strings.ToLower(include)
 		}
 		incList = " " + include + " "
 	}
-	if exclude != "" {
+	if "" != exclude {
 		if ignoreECase {
 			exclude = strings.ToLower(exclude)
 		}
 		excList = " " + exclude + " "
 	}
-	if dirOutput == "" && fileOutput == "" {
+	if "" == dirOutput && "" == fileOutput {
 		fileOutput = "%f"
 	}
 
-	if outputFile != "" {
+	if "" != outputFile {
 		outputFile = pth.AsRealPath(outputFile)
 		os.Remove(outputFile)
 		mode := 0644
@@ -463,11 +629,18 @@ func main() {
 				args += v + " "
 			}
 		}
+		if "" != cParams {
+			args += "( " + cParams + " )"
+		}
 		tMap["a"] = args
 		fmt.Fprintln(outTo, tMap.replace(bashHead))
 		delete(tMap, "a")
 	}
-
+	if "" != cHead {
+		addNumberArgs()
+		fmt.Fprintln(outTo, tMap.replace(cHead))
+		clearNumberArgs()
+	}
 	dirs := flag.Args()
 	if len(dirs) == 0 {
 		dirs = append(dirs, "./")
@@ -484,5 +657,10 @@ func main() {
 		clearDirMetas()
 		tMap["T"] = strconv.FormatInt(totalCount, 10)
 		tMap.output(outTo, tailOutput)
+	}
+	if "" != cTail {
+		addNumberArgs()
+		fmt.Fprintln(outTo, tMap.replace(cTail))
+		clearNumberArgs()
 	}
 }
