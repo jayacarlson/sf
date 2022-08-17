@@ -233,26 +233,26 @@ func testFilesBashOutput() (string, string, bool) {
 
 func TestDirs(t *testing.T) {
 	if tst.Testing(dbg.IAm(), "", true) {
-		tst.Test(t, testDirsNonRecursive)
-		tst.Test(t, testDirsRecursive)
-		tst.Test(t, testDirsReverseRecursive)
-		tst.Test(t, testDirsAlterCase)
-		tst.Test(t, testDirsBashOutput)
+		tst.Func(t, testDirsNonRecursive)
+		tst.Func(t, testDirsRecursive)
+		tst.Func(t, testDirsReverseRecursive)
+		tst.Func(t, testDirsAlterCase)
+		tst.Func(t, testDirsBashOutput)
 	}
 }
 
 func TestFiles(t *testing.T) {
 	if tst.Testing(dbg.IAm(), "", true) {
-		tst.Test(t, testFilesNonRecursive)
-		tst.Test(t, testFilesRecursive)
-		tst.Test(t, testFilesReverseRecursive)
-		tst.Test(t, testFilesNoExt)
-		tst.Test(t, testFilesIncExt)
-		tst.Test(t, testFilesExcExt)
-		tst.Test(t, testFilesIncExtIgCase)
-		tst.Test(t, testFilesExcExtIgCase)
-		tst.Test(t, testFilesAlterCase)
-		tst.Test(t, testFilesBashOutput)
+		tst.Func(t, testFilesNonRecursive)
+		tst.Func(t, testFilesRecursive)
+		tst.Func(t, testFilesReverseRecursive)
+		tst.Func(t, testFilesNoExt)
+		tst.Func(t, testFilesIncExt)
+		tst.Func(t, testFilesExcExt)
+		tst.Func(t, testFilesIncExtIgCase)
+		tst.Func(t, testFilesExcExtIgCase)
+		tst.Func(t, testFilesAlterCase)
+		tst.Func(t, testFilesBashOutput)
 	}
 }
 
